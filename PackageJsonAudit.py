@@ -162,6 +162,21 @@ def escape_graphviz_str(input_string: str) -> str:
 
     return input_string
 
+def get_package_cluster(db_cursor: sqlite3.Cursor, cluster_name: str, label: str, styling: str, where_clause: str) -> str:
+    dot_string = f'\tsubgraph cluster_{cluster_name} {{\n'
+    dot_string += f'\t\t{styling}\n'
+    dot_string += f'\t\tlabel="{label}";\n'
+    for package in db_cursor.execute('SELECT name, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") ' +
+            'FROM packages ' +
+            where_clause + ' ' +
+            'GROUP BY name'):
+        package_name = package[0]
+        package_versions = package[1]
+        dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}"];\n'
+    dot_string += '\t}\n'
+
+    return dot_string
+
 def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
     """
     Function to generate GraphViz output from database contents
@@ -171,29 +186,8 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
     rankdir=LR;\n'''
 
     # Populate nodes
-    dot_string += '\tsubgraph cluster_package_json {\n'
-    dot_string += '\t\tstyle=filled;\n'
-    dot_string += '\t\tcolor=gold;\n'
-    dot_string += '\t\tlabel="package.json";\n'
-    for package in db_cursor.execute('SELECT name, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") ' +
-            'FROM packages ' +
-            'WHERE file = "package.json" ' +
-            'GROUP BY name'):
-        package_name = package[0]
-        package_versions = package[1]
-        dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}"];\n'
-    dot_string += '\t}\n'
-
-    dot_string += '\tsubgraph cluster_lock_json {\n'
-    dot_string += '\t\tlabel="package-lock.json";\n'
-    for package in db_cursor.execute('SELECT name, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") ' +
-            'FROM packages ' +
-            'WHERE file = "package-lock.json" ' +
-            'GROUP BY name'):
-        package_name = package[0]
-        package_versions = package[1]
-        dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}"];\n'
-    dot_string += '\t}\n'
+    dot_string += get_package_cluster(db_cursor, 'package_json', 'package.json', 'style=filled;color=gold;', 'WHERE file = "package.json"')
+    dot_string += get_package_cluster(db_cursor, 'package_lock_json', 'package-lock.json', '', 'WHERE file = "package-lock.json"')
 
     # Populate edges
     for dependency in db_cursor.execute('SELECT "<p" || parent.id || ">", parentName, "<p" || child.id || ">", childName\n' +
