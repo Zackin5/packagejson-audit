@@ -172,6 +172,8 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
 
     # Populate nodes
     dot_string += '\tsubgraph cluster_package_json {\n'
+    dot_string += '\t\tstyle=filled;\n'
+    dot_string += '\t\tcolor=gold;\n'
     dot_string += '\t\tlabel="package.json";\n'
     for package in db_cursor.execute('SELECT name, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") ' +
             'FROM packages ' +
@@ -179,7 +181,7 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
             'GROUP BY name'):
         package_name = package[0]
         package_versions = package[1]
-        dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {package_versions}"];\n'
+        dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}"];\n'
     dot_string += '\t}\n'
 
     dot_string += '\tsubgraph cluster_lock_json {\n'
@@ -190,7 +192,7 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
             'GROUP BY name'):
         package_name = package[0]
         package_versions = package[1]
-        dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {package_versions}"];\n'
+        dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}"];\n'
     dot_string += '\t}\n'
 
     # Populate edges
