@@ -1,7 +1,7 @@
 # Python script to build a dependency graph of package-lock.json includes
 
 import argparse, pathlib, os, os.path, json, sqlite3
-import pydot
+import graphviz
 
 ###########
 ## Logic ##
@@ -167,22 +167,40 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
     """
     dot_string = '''digraph package_dependency_graph {
     node [shape=record];
-    rankdir=LR;
-    '''
+    rankdir=LR;\n'''
 
-    for package in db_cursor.execute('SELECT name, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") FROM packages GROUP BY name'):
+    # Populate nodes
+    dot_string += '\tsubgraph cluster_package_json {\n'
+    dot_string += '\t\tlabel="package.json";\n'
+    for package in db_cursor.execute('SELECT name, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") ' +
+            'FROM packages ' +
+            'WHERE file = "package.json" ' +
+            'GROUP BY name'):
         package_name = package[0]
         package_versions = package[1]
-        dot_string += f'\t{escape_graphviz_str(package_name)} [label="{package_name} | {package_versions}"];\n'
+        dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {package_versions}"];\n'
+    dot_string += '\t}\n'
 
+    dot_string += '\tsubgraph cluster_lock_json {\n'
+    dot_string += '\t\tlabel="package-lock.json";\n'
+    for package in db_cursor.execute('SELECT name, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") ' +
+            'FROM packages ' +
+            'WHERE file = "package-lock.json" ' +
+            'GROUP BY name'):
+        package_name = package[0]
+        package_versions = package[1]
+        dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {package_versions}"];\n'
+    dot_string += '\t}\n'
+
+    # Populate edges
     for dependency in db_cursor.execute('SELECT "<p" || parent.id || ">", parentName, "<p" || child.id || ">", childName\n' +
-        'FROM dependencies\n' +
-        'JOIN packages AS parent ON\n' +
-            '\tdependencies.parentName == parent.name and\n' +
-            '\tdependencies.parentVersion == parent.version\n' +
-        'JOIN packages AS child ON\n' +
-            '\tdependencies.childName == child.name and\n' +
-            '\tdependencies.childVersion == child.version'):
+            'FROM dependencies\n' +
+            'JOIN packages AS parent ON\n' +
+                '\tdependencies.parentName == parent.name and\n' +
+                '\tdependencies.parentVersion == parent.version\n' +
+            'JOIN packages AS child ON\n' +
+                '\tdependencies.childName == child.name and\n' +
+                '\tdependencies.childVersion == child.version'):
         parent_id = dependency[0]
         parent_node = escape_graphviz_str(dependency[1])
         child_id = dependency[2]
@@ -192,12 +210,13 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
 
     dot_string += "}"
 
-    dot = pydot.graph_from_dot_data(dot_string)
+    # Render graphviz
+    dot = graphviz.Source(dot_string)
 
     if dot is None:
         raise Exception(f'Invalid GraphViz output generated:\n"{dot_string}"')
 
-    dot[0].write_png(graphviz_output_path)
+    dot.render(engine='dot', format='svg', outfile=graphviz_output_path)
 
 
 ####################
