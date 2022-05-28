@@ -42,13 +42,14 @@ def init_database(output_path: str) -> sqlite3.Connection:
 
     cur = connection.cursor()
 
-    cur.execute('CREATE TABLE packages (id integer PRIMARY KEY NOT NULL, name text NOT NULL, version text NOT NULL, file text NOT NULL, fileSection text NOT NULL)')
+    cur.execute('CREATE TABLE packages (id integer PRIMARY KEY NOT NULL, name text NOT NULL, version text NOT NULL, file text NOT NULL, fileSection text NOT NULL, UNIQUE(name, version, fileSection))')
     cur.execute('''CREATE TABLE dependencies 
     (parentName text, parentVersion text, childName text, childVersion text, 
     FOREIGN KEY(parentName) REFERENCES package(name), 
     FOREIGN KEY(parentVersion) REFERENCES package(version), 
     FOREIGN KEY(childName) REFERENCES package(name), 
-    FOREIGN KEY(childVersion) REFERENCES package(version))''')
+    FOREIGN KEY(childVersion) REFERENCES package(version),
+    UNIQUE(parentName, parentVersion, childName, childVersion))''')
 
     connection.commit()
 
@@ -58,13 +59,13 @@ def database_add_package(db_cursor: sqlite3.Cursor, package_name: str, package_v
     """
     Insert package information into database
     """
-    db_cursor.execute('INSERT INTO packages (name, version, file, fileSection) VALUES (?, ?, ?, ?)', (package_name, package_version, file, file_section))
+    db_cursor.execute('INSERT OR IGNORE INTO packages (name, version, file, fileSection) VALUES (?, ?, ?, ?)', (package_name, package_version, file, file_section))
 
 def database_add_dependency(db_cursor: sqlite3.Cursor, parent_package_name: str, parent_package_version: str, child_package_name: str, child_package_version: str):
     """
     Add dependency information to database
     """
-    db_cursor.execute('INSERT INTO dependencies VALUES (?, ?, ?, ?)', (parent_package_name, parent_package_version, child_package_name, child_package_version))
+    db_cursor.execute('INSERT OR IGNORE INTO dependencies VALUES (?, ?, ?, ?)', (parent_package_name, parent_package_version, child_package_name, child_package_version))
 
 ###########################
 ## JSON import functions ##
