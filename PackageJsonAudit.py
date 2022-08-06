@@ -15,6 +15,7 @@ def load_args():
     args.add_argument('packageDir', metavar='Input package directory', action='store', type=str, help='Path to package directory containing npm package.json and package-lock.json files')
     args.add_argument('outputPath', metavar='Output SQLite file', action='store', type=str, help='Output path for final SQLite DB file')
     args.add_argument('-gv', dest='graphvizOutputPath', metavar='Graphviz output path', action='store', type=str, help='Write path for graphviz output')
+    args.add_argument('-gvf', dest='graphvizPackageFilter', metavar='Graphviz package names filter', nargs='*', action='store', type=str, help='List of package names to filter Graphviz output for')
 
     return args.parse_args()
 
@@ -162,7 +163,7 @@ def escape_graphviz_str(input_string: str) -> str:
 
     return input_string
 
-def get_package_cluster(db_cursor: sqlite3.Cursor, cluster_name: str, label: str, styling: str, where_clause: str) -> str:
+def get_package_cluster(db_cursor: sqlite3.Cursor, cluster_name: str, label: str, styling: str = '', where_clause: str = '') -> str:
     dot_string = f'\tsubgraph cluster_{cluster_name} {{\n'
     dot_string += f'\t\t{styling}\n'
     dot_string += f'\t\tlabel="{label}";\n'
@@ -186,8 +187,8 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
     rankdir=LR;\n'''
 
     # Populate nodes
-    dot_string += get_package_cluster(db_cursor, 'package_json', 'package.json', 'style=filled;color=gold;', 'WHERE file = "package.json"')
-    dot_string += get_package_cluster(db_cursor, 'package_lock_json', 'package-lock.json', '', 'WHERE file = "package-lock.json"')
+    dot_string += get_package_cluster(db_cursor, 'package_json', 'package.json', styling='style=filled;color=gold;', where_clause='WHERE file = "package.json"')
+    dot_string += get_package_cluster(db_cursor, 'package_lock_json', 'package-lock.json', where_clause='WHERE file = "package-lock.json"')
 
     # Populate edges
     for dependency in db_cursor.execute('SELECT "<p" || parent.id || ">", parentName, "<p" || child.id || ">", childName\n' +
@@ -197,7 +198,8 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
                 '\tdependencies.parentVersion == parent.version\n' +
             'JOIN packages AS child ON\n' +
                 '\tdependencies.childName == child.name and\n' +
-                '\tdependencies.childVersion == child.version'):
+                '\tdependencies.childVersion == child.version\n' +
+            'GROUP BY dependencies.parentName, dependencies.childName'):
         parent_id = dependency[0]
         parent_node = escape_graphviz_str(dependency[1])
         child_id = dependency[2]
@@ -215,6 +217,84 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
 
     dot.render(engine='dot', format='svg', outfile=graphviz_output_path)
 
+#########################
+## GraphViz (filtered) ##
+#########################
+
+def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor):
+    # Output strings
+    package_dot_string = ''
+    dependencies_dot_string = ''
+
+    # Get starting packages
+    package_values = "'), ('".join(package_names)
+    package_sql = ('SELECT name, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") ' +
+            'FROM packages ' +
+            f"WHERE name IN (VALUES ('{package_values}')) " +
+            'GROUP BY name')
+    package_select = db_cursor.execute(package_sql)
+
+    for result in package_select.fetchall():
+        # Add package DOT
+        package_name = result[0]
+        package_versions = result[1]
+        package_dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}"];\n'
+
+        # Add package dependencies to DOT
+        parent_dependencies: 'list[str]' = []
+
+        dependencies_sql = ('SELECT "<p" || parent.id || ">", parentName, "<p" || child.id || ">", childName\n' +
+                'FROM dependencies\n' +
+                'JOIN packages AS parent ON\n' +
+                    '\tdependencies.parentName == parent.name and\n' +
+                    '\tdependencies.parentVersion == parent.version\n' +
+                'JOIN packages AS child ON\n' +
+                    '\tdependencies.childName == child.name and\n' +
+                    '\tdependencies.childVersion == child.version\n' +
+                'WHERE\n' +
+                    f"\tdependencies.childName == '{package_name}'\n" +
+                'GROUP BY dependencies.parentName, dependencies.childName')
+        dependencies_select = db_cursor.execute(dependencies_sql)
+
+        for dependency in dependencies_select.fetchall():
+            parent_id = dependency[0]
+            parent_node = escape_graphviz_str(dependency[1])
+            child_id = dependency[2]
+            child_node = escape_graphviz_str(dependency[3])
+
+            dependencies_dot_string += f'\t"{child_node}":{child_id} -> "{parent_node}":{parent_id};\n'
+
+            parent_dependencies.append(dependency[1])
+
+        # Parse subpackages
+        sub_results = format_subpackages(parent_dependencies, db_cursor)
+        package_dot_string += sub_results[0]
+        dependencies_dot_string += sub_results[1]
+
+    return package_dot_string, dependencies_dot_string
+
+
+def output_filtered_graphviz(graphviz_output_path: str, package_names: 'list[str]', db_cursor: sqlite3.Cursor):
+    """
+    Function to generate GraphViz output from database contents, only showing the include stack for package_names
+    """
+    dot_string = '''digraph package_dependency_graph {
+    node [shape=record];
+    rankdir=LR;\n'''
+
+    # Populate nodes
+    results = format_subpackages(package_names, db_cursor)
+    dot_string += results[0]
+    dot_string += results[1]
+    dot_string += "}"
+
+    # Render graphviz
+    dot = graphviz.Source(dot_string)
+
+    if dot is None:
+        raise Exception(f'Invalid GraphViz output generated:\n"{dot_string}"')
+
+    dot.render(engine='dot', format='svg', outfile=graphviz_output_path)
 
 ####################
 ## Entry function ##
@@ -234,7 +314,11 @@ def main():
 
     if args.graphvizOutputPath is not None:
         print('Building GraphViz graph...')
-        output_graphviz(args.graphvizOutputPath, db_cursor)
+
+        if args.graphvizPackageFilter is None:
+            output_graphviz(args.graphvizOutputPath, db_cursor)
+        else:
+            output_filtered_graphviz(args.graphvizOutputPath, args.graphvizPackageFilter, db_cursor)
 
     db.close()
 
