@@ -198,8 +198,7 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
                 '\tdependencies.parentVersion == parent.version\n' +
             'JOIN packages AS child ON\n' +
                 '\tdependencies.childName == child.name and\n' +
-                '\tdependencies.childVersion == child.version\n' +
-            'GROUP BY dependencies.parentName, dependencies.childName'):
+                '\tdependencies.childVersion == child.version'):
         parent_id = dependency[0]
         parent_node = escape_graphviz_str(dependency[1])
         child_id = dependency[2]
@@ -221,24 +220,32 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
 ## GraphViz (filtered) ##
 #########################
 
-def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor) -> tuple[set[str], set[str]]:
+def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor, color: str = None) -> tuple[set[str], set[str]]:
     # Output strings
     package_dot_strings: 'set[str]' = set()
     dependencies_dot_strings: 'set[str]' = set()
 
     # Get starting packages
     package_values = "'), ('".join(package_names)
-    package_sql = ('SELECT name, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") ' +
+    package_sql = ('SELECT name, file, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") ' +
             'FROM packages ' +
             f"WHERE name IN (VALUES ('{package_values}')) " +
             'GROUP BY name')
     package_select = db_cursor.execute(package_sql)
 
     for result in package_select.fetchall():
-        # Add package DOT
+        # Format package DOT string
         package_name = result[0]
-        package_versions = result[1]
-        package_dot_strings.add(f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}"];')
+        package_source = result[1]
+        package_versions = result[2]
+        package_color = 'black'
+
+        if color is not None:
+            package_color = color
+        elif package_source == 'package.json':
+            package_color = 'gold'
+
+        package_dot_strings.add(f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}", color={package_color}];')
 
         # Add package dependencies to DOT
         parent_dependencies: 'list[str]' = []
@@ -252,11 +259,11 @@ def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor) ->
                     '\tdependencies.childName == child.name and\n' +
                     '\tdependencies.childVersion == child.version\n' +
                 'WHERE\n' +
-                    f"\tdependencies.childName == '{package_name}'\n" +
-                'GROUP BY dependencies.parentName, dependencies.childName')
+                    f"\tdependencies.childName == '{package_name}'")
         dependencies_select = db_cursor.execute(dependencies_sql)
 
         for dependency in dependencies_select.fetchall():
+            # Format dependency DOT string
             parent_id = dependency[0]
             parent_node = escape_graphviz_str(dependency[1])
             child_id = dependency[2]
@@ -282,7 +289,7 @@ def output_filtered_graphviz(graphviz_output_path: str, package_names: 'list[str
     rankdir=LR;\n'''
 
     # Populate nodes
-    results = format_subpackages(package_names, db_cursor)
+    results = format_subpackages(package_names, db_cursor, color='red')
     dot_string += '\n'.join(results[0])
     dot_string += '\n'.join(results[1])
     dot_string += "}"
