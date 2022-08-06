@@ -221,10 +221,10 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
 ## GraphViz (filtered) ##
 #########################
 
-def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor):
+def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor) -> tuple[set[str], set[str]]:
     # Output strings
-    package_dot_string = ''
-    dependencies_dot_string = ''
+    package_dot_strings: 'set[str]' = set()
+    dependencies_dot_strings: 'set[str]' = set()
 
     # Get starting packages
     package_values = "'), ('".join(package_names)
@@ -238,7 +238,7 @@ def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor):
         # Add package DOT
         package_name = result[0]
         package_versions = result[1]
-        package_dot_string += f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}"];\n'
+        package_dot_strings.add(f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}"];')
 
         # Add package dependencies to DOT
         parent_dependencies: 'list[str]' = []
@@ -262,17 +262,16 @@ def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor):
             child_id = dependency[2]
             child_node = escape_graphviz_str(dependency[3])
 
-            dependencies_dot_string += f'\t"{child_node}":{child_id} -> "{parent_node}":{parent_id};\n'
+            dependencies_dot_strings.add(f'\t"{child_node}":{child_id} -> "{parent_node}":{parent_id};')
 
             parent_dependencies.append(dependency[1])
 
         # Parse subpackages
         sub_results = format_subpackages(parent_dependencies, db_cursor)
-        package_dot_string += sub_results[0]
-        dependencies_dot_string += sub_results[1]
+        package_dot_strings.update(sub_results[0])
+        dependencies_dot_strings.update(sub_results[1])
 
-    return package_dot_string, dependencies_dot_string
-
+    return package_dot_strings, dependencies_dot_strings
 
 def output_filtered_graphviz(graphviz_output_path: str, package_names: 'list[str]', db_cursor: sqlite3.Cursor):
     """
@@ -284,8 +283,8 @@ def output_filtered_graphviz(graphviz_output_path: str, package_names: 'list[str
 
     # Populate nodes
     results = format_subpackages(package_names, db_cursor)
-    dot_string += results[0]
-    dot_string += results[1]
+    dot_string += '\n'.join(results[0])
+    dot_string += '\n'.join(results[1])
     dot_string += "}"
 
     # Render graphviz
