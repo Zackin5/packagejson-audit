@@ -287,6 +287,8 @@ def output_filtered_graphviz(graphviz_output_path: str, package_names: 'list[str
     dot_string = '''digraph package_dependency_graph {
     node [shape=record];
     rankdir=LR;\n'''
+    
+    dot_string += get_package_cluster(db_cursor, 'package_json', 'package.json', styling='style=filled;color=gold;', where_clause='WHERE file = "package.json"')
 
     # Populate nodes
     results = format_subpackages(package_names, db_cursor, color='red')
