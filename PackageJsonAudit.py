@@ -220,11 +220,7 @@ def output_graphviz(graphviz_output_path: str, db_cursor: sqlite3.Cursor):
 ## GraphViz (filtered) ##
 #########################
 
-def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor, color: str = None) -> tuple[set[str], set[str]]:
-    # Output strings
-    package_dot_strings: 'set[str]' = set()
-    dependencies_dot_strings: 'set[str]' = set()
-
+def get_packages(package_names: 'list[str]', db_cursor: sqlite3.Cursor):
     # Get starting packages
     package_values = "'), ('".join(package_names)
     package_sql = ('SELECT name, file, GROUP_CONCAT("<p" || id || "> " || REPLACE(REPLACE(version, ">", "\>"), "<", "\<"), " | ") ' +
@@ -233,50 +229,61 @@ def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor, co
             'GROUP BY name')
     package_select = db_cursor.execute(package_sql)
 
-    for result in package_select.fetchall():
-        # Format package DOT string
-        package_name = result[0]
-        package_source = result[1]
-        package_versions = result[2]
-        package_color = 'black'
+    return package_select.fetchall()
 
-        if color is not None:
-            package_color = color
-        elif package_source == 'package.json':
-            package_color = 'gold'
+def format_subpackages(package_names: 'list[str]', db_cursor: sqlite3.Cursor) -> 'tuple[set[str], set[str]]':
+    # Output strings
+    package_dot_strings: 'set[str]' = set()
+    dependencies_dot_strings: 'set[str]' = set()
 
-        package_dot_strings.add(f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}", color={package_color}];')
+    all_packages: 'set[str]' = set()
+    current_packages = get_packages(package_names, db_cursor)
+    intersect = set(p[0] for p in current_packages) - all_packages
 
-        # Add package dependencies to DOT
+    while any(intersect):
         parent_dependencies: 'list[str]' = []
 
-        dependencies_sql = ('SELECT "<p" || parent.id || ">", parentName, "<p" || child.id || ">", childName\n' +
-                'FROM dependencies\n' +
-                'JOIN packages AS parent ON\n' +
-                    '\tdependencies.parentName == parent.name and\n' +
-                    '\tdependencies.parentVersion == parent.version\n' +
-                'JOIN packages AS child ON\n' +
-                    '\tdependencies.childName == child.name and\n' +
-                    '\tdependencies.childVersion == child.version\n' +
-                'WHERE\n' +
-                    f"\tdependencies.childName == '{package_name}'")
-        dependencies_select = db_cursor.execute(dependencies_sql)
+        for result in current_packages:
+            # Format package DOT string
+            package_name = result[0]
+            package_source = result[1]
+            package_versions = result[2]
+            package_color = 'black'
 
-        for dependency in dependencies_select.fetchall():
-            # Format dependency DOT string
-            parent_id = dependency[0]
-            parent_node = escape_graphviz_str(dependency[1])
-            child_id = dependency[2]
-            child_node = escape_graphviz_str(dependency[3])
+            if package_name in package_names:
+                package_color = 'red'
+            elif package_source == 'package.json':
+                package_color = 'gold'
 
-            dependencies_dot_strings.add(f'\t"{child_node}":{child_id} -> "{parent_node}":{parent_id};')
+            package_dot_strings.add(f'\t\t{escape_graphviz_str(package_name)} [label="{package_name} | {{{package_versions}}}", color={package_color}];')
 
-            parent_dependencies.append(dependency[1])
+            # Add package dependencies to DOT
+            dependencies_sql = ('SELECT "<p" || parent.id || ">", parentName, "<p" || child.id || ">", childName\n' +
+                    'FROM dependencies\n' +
+                    'JOIN packages AS parent ON\n' +
+                        '\tdependencies.parentName == parent.name and\n' +
+                        '\tdependencies.parentVersion == parent.version\n' +
+                    'JOIN packages AS child ON\n' +
+                        '\tdependencies.childName == child.name and\n' +
+                        '\tdependencies.childVersion == child.version\n' +
+                    'WHERE\n' +
+                        f"\tdependencies.childName == '{package_name}'")
+            dependencies_select = db_cursor.execute(dependencies_sql)
 
-        # Parse subpackages
-        sub_results = format_subpackages(parent_dependencies, db_cursor)
-        package_dot_strings.update(sub_results[0])
-        dependencies_dot_strings.update(sub_results[1])
+            for dependency in dependencies_select.fetchall():
+                # Format dependency DOT string
+                parent_id = dependency[0]
+                parent_node = escape_graphviz_str(dependency[1])
+                child_id = dependency[2]
+                child_node = escape_graphviz_str(dependency[3])
+
+                dependencies_dot_strings.add(f'\t"{child_node}":{child_id} -> "{parent_node}":{parent_id};')
+
+                parent_dependencies.append(dependency[1])
+
+        all_packages.update(intersect)
+        current_packages = get_packages(parent_dependencies, db_cursor)
+        intersect = set(p[0] for p in current_packages) - all_packages
 
     return package_dot_strings, dependencies_dot_strings
 
@@ -291,7 +298,7 @@ def output_filtered_graphviz(graphviz_output_path: str, package_names: 'list[str
     dot_string += get_package_cluster(db_cursor, 'package_json', 'package.json', styling='style=filled;color=gold;', where_clause='WHERE file = "package.json"')
 
     # Populate nodes
-    results = format_subpackages(package_names, db_cursor, color='red')
+    results = format_subpackages(package_names, db_cursor)
     dot_string += '\n'.join(results[0])
     dot_string += '\n'.join(results[1])
     dot_string += "}"
